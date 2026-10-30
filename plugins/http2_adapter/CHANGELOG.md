@@ -5,7 +5,7 @@ See the [Migration Guide][] for the complete breaking changes list.**
 
 ## Unreleased
 
-*None.*
+- Fail every request waiting on a shared connection attempt when it fails, including requests started in another error zone. Before, such a request never completed and the error was reported as uncaught.
 
 ## 2.9.0
 

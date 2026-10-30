@@ -39,7 +39,7 @@ class _ConnectionManager implements ConnectionManager {
   final _transportsMap = <String, _ClientTransportConnectionState>{};
 
   /// Saving the connecting futures
-  final _connectFutures = <String, Future<_ClientTransportConnectionState>>{};
+  final _connectFutures = <String, _PendingConnection>{};
 
   bool _closed = false;
   bool _forceClosed = false;
@@ -75,14 +75,10 @@ class _ConnectionManager implements ConnectionManager {
     _ClientTransportConnectionState? transportState =
         _transportsMap[transportCacheKey];
     if (transportState == null) {
-      Future<_ClientTransportConnectionState>? initFuture =
-          _connectFutures[transportCacheKey];
-      if (initFuture == null) {
-        _connectFutures[transportCacheKey] =
-            initFuture = _connect(options, redirects);
-      }
+      final pending = _connectFutures[transportCacheKey] ??=
+          _PendingConnection(_connect(options, redirects));
       try {
-        transportState = await initFuture;
+        transportState = await pending.join();
       } catch (e) {
         _connectFutures.remove(transportCacheKey);
         rethrow;
@@ -365,5 +361,31 @@ class _ClientTransportConnectionState {
       // if active
       _startTimer(callback, idleTimeout, idleTimeout);
     });
+  }
+}
+
+/// A connection attempt shared by the requests that wait for it.
+///
+/// Callers such as Dio run each request in its own error zone, and an
+/// error is not delivered across error zones: a request awaiting a future
+/// created in another request's zone never sees that future's error, which
+/// is reported as uncaught in the creating zone instead. Each waiter
+/// therefore gets its own future, completed from the zone that made the
+/// attempt.
+class _PendingConnection {
+  _PendingConnection(this._future) : _zone = Zone.current;
+
+  final Future<_ClientTransportConnectionState> _future;
+  final Zone _zone;
+
+  Future<_ClientTransportConnectionState> join() {
+    if (identical(Zone.current, _zone)) {
+      return _future;
+    }
+    final completer = Completer<_ClientTransportConnectionState>();
+    _zone.run(
+      () => _future.then(completer.complete, onError: completer.completeError),
+    );
+    return completer.future;
   }
 }
